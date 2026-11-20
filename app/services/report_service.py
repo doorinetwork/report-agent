@@ -1,23 +1,15 @@
 """Report Service: 6종 보고서 공통 CRUD/버전/동기화. Repository는 DB, Service는 업무 규칙."""
-
 from datetime import datetime,date,timezone
-
-from sqlalchemy import select
-
+from sqlalchemy import select,func
 from sqlalchemy.orm import Session
-
 from app.core.config import settings,at_least
-
-from app.models.report import Report, ReportCategory, ReportEmbedding, PromptVersion, DETAIL_MODELS
-
+from app.models.report import (Report,ReportCategory,ReportEmbedding,PromptVersion,
+                               DETAIL_MODELS, DETAIL_FIELDS, PromptReport)
 from app.repositories import report_repository as repo
-
 from app.integrations import embedding_client as emb
-
+from app.integrations import llm_client
 from app.services.errors import DomainError
-
-from app.schemas.report import ReportCreate, ReportUpdate, DETAIL_SCHEMAS
-
+from app.schemas.report import ReportCreate,ReportUpdate,PromptVersionCreate,DETAIL_SCHEMAS
 from pydantic import ValidationError
 
 INPUT_FIELDS={
@@ -28,12 +20,10 @@ INPUT_FIELDS={
     'PROMPT':{'purpose','prompt_text'},
     'MEETING':{'meeting_at','attendees','decisions'},
 }
-
 OPTIONAL={'DAILY_WORK':{'blockers'},'DATA_PROCESSING':{'quality_notes'}}
-
 DATE_FIELDS={'experiment_date','work_date','target_date'}
-
 TIME_FIELDS={'meeting_at'}
+
 
 def validate_details(code:str,details:dict,content:str|None=None)->dict:
     """카테고리별 Detail 스키마. Intermediate부터 Pydantic 세부 Model로 검증합니다."""
@@ -72,13 +62,16 @@ def validate_details(code:str,details:dict,content:str|None=None)->dict:
             raise DomainError(422,'VALIDATION_ERROR','카테고리별 상세 속성을 확인하세요.') from e
     return result
 
+
 def encode_overview(overview:str)->list[float]:
     try: return emb.encode([overview],kind='passage')[0]
     except Exception as e:raise DomainError(503,'EMBEDDING_UNAVAILABLE','E5 Embedding을 생성하지 못했습니다.') from e
 
+
 def categories(db:Session)->dict:
     rows=db.scalars(select(ReportCategory).order_by(ReportCategory.category_id)).all()
     return {'items':[{'category_id':r.category_id,'code':r.code,'name':r.name,'description':r.description} for r in rows]}
+
 
 def create_report(db:Session,data:ReportCreate)->dict:
     details=validate_details(data.category_code,data.details,data.content)
@@ -100,12 +93,15 @@ def create_report(db:Session,data:ReportCreate)->dict:
     return {'report_id':rid,'category_code':data.category_code,'title':data.title,
             'author':data.author,'revision':1,'index_status':'ready','embedding_model':settings.embedding_model}
 
+
 def get_report(db:Session,rid:int)->dict:
     return repo.read_report(db,rid)
+
 
 def list_reports(db:Session,title:str|None,limit:int,offset:int,
                  category_code:str|None=None,updated_after:datetime|None=None):
     return repo.list_reports(db,title,limit,offset,category_code,updated_after)
+
 
 def update_report(db:Session,rid:int,data:ReportUpdate)->dict:
     # 현업 관점: E5 계산에 실패해도 기존 Report/Embedding은 그대로 있어야 합니다.
@@ -163,8 +159,21 @@ def update_report(db:Session,rid:int,data:ReportUpdate)->dict:
         revision=report.revision
     return {'report_id':rid,'revision':revision,'index_status':'ready','embedding_updated':needs_vector}
 
+
 def delete_report(db:Session,rid:int)->None:
     with db.begin():
         report=db.get(Report,rid)
         if report is None:raise DomainError(404,'REPORT_NOT_FOUND','보고서가 없습니다.')
         db.delete(report) # PostgreSQL ON DELETE CASCADE가 상세·Embedding·Prompt 버전을 제거
+
+
+def summarize_report(db:Session,rid:int,style:str='brief',max_sentences:int=3)->dict:
+    record=repo.read_report(db,rid)
+    result=llm_client.summarize(record['content'],style,max_sentences,allow_structured=at_least('intermediate'),
+                                retries=2 if at_least('advanced') else 0)
+    payload={'report_id':rid,'source_revision':record['revision'],**result,
+            'model':settings.llm_model,'status':'completed'}
+    if at_least('advanced') and llm_client.get_last_usage() is not None:
+        payload['usage']=llm_client.get_last_usage()
+    return payload
+
