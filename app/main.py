@@ -28,7 +28,7 @@ def on_domain_error(request:Request,exc:DomainError):
 
 
 # ============================================================
-# [요구사항 B-01] API-00 Health 확인
+# [요구사항 B-01] [API-00] Health 확인
 # ============================================================
 # - DB 연결 성공 + pgvector 확장 존재 : 200 {"status":"ok","db":"ready","vector":"ready"}
 # - 그 밖의 모든 실패                 : 503 DB_UNAVAILABLE
