@@ -51,11 +51,11 @@ def health():
 # ============================================================
 # 'app.main:app' : app/main.py 안의 app 객체를 실행 대상으로 지정
 # host='127.0.0.1' : local IP address
-# port=8000        : 접속 port // Postman base_url http://127.0.0.1:8000
+# port=8001        : 접속 port // Postman base_url http://127.0.0.1:8001
 # reload=False     : 코드 변경 시 자동 재시작하지 않음 (변경 후 직접 재시작)
 def main():
     import uvicorn
     # 공통 main()은 완성. Core 구현은 app/api, services, repositories에 분리.
-    uvicorn.run('app.main:app',host='127.0.0.1',port=8000,reload=False)
+    uvicorn.run('app.main:app',host='127.0.0.1',port=8001,reload=False)
 
 if __name__=='__main__':main()
